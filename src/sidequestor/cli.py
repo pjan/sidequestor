@@ -59,9 +59,13 @@ COMMANDS = {
     "approval": "manage approval state",
     "log": "write a timeline event",
     "slack-send": "send through the Slack surface",
+    "telegram-send": "save a Telegram draft or explicitly send a message",
     "react": "advance reaction lifecycle",
     "mcp-call": "call an MCP surface",
     "jira-call": "call a Jira surface",
+    "telegram-auth": "authorize or inspect a Telegram user session",
+    "x-auth": "authorize or inspect an X user account",
+    "x-send": "perform an X action as the authorized user",
 }
 
 LEGACY_COMMANDS = {
@@ -74,6 +78,10 @@ LEGACY_COMMANDS = {
     "ack": "yaas-triage/ledger/ack-watch.py",
     "approval": "yaas-triage/ledger/approval-helper.py",
     "log": "yaas-triage/surfaces/log-event.py",
+    "telegram-send": "yaas-triage/surfaces/telegram-send.py",
+    "telegram-auth": "yaas-triage/surfaces/telegram_credentials.py",
+    "x-auth": "yaas-triage/surfaces/x_credentials.py",
+    "x-send": "yaas-triage/surfaces/x-send.py",
 }
 
 # These four route to isolated.py, which RECORDS the call instead of performing it.
@@ -110,6 +118,11 @@ def _command_help(command: str) -> str:
         "dashboard": "sidequestor [--workspace PATH] dashboard serve|url",
         "migrate": "sidequestor [--workspace PATH] migrate [NAME|--name NAME]",
         "upgrade": "sidequestor [--workspace PATH] upgrade [--source GITHUB_URL --ref REF] [--pre] [--yes] [--no-restart]",
+        "watch": "sidequestor [--workspace PATH] watch QUEST_ID WATCH_JSON\n       sidequestor [--workspace PATH] watch retire QUEST_ID WATCH_ID REASON",
+        "telegram-send": "sidequestor [--workspace PATH] telegram-send --peer @name --message \"hello\" [--send] [--quest-id QUEST_ID] [--reply-to-message-id N] [--credential-id ID] [--idempotency-key KEY]",
+        "telegram-auth": "sidequestor [--workspace PATH] telegram-auth authorize API_ID [CREDENTIAL_ID]\n       sidequestor [--workspace PATH] telegram-auth status [CREDENTIAL_ID]",
+        "x-auth": "sidequestor [--workspace PATH] x-auth authorize CLIENT_ID [CREDENTIAL_ID]\n       sidequestor [--workspace PATH] x-auth status [CREDENTIAL_ID]\n       sidequestor [--workspace PATH] x-auth revoke [CREDENTIAL_ID]",
+        "x-send": "sidequestor [--workspace PATH] x-send ACTION [OPTIONS]\n       sidequestor [--workspace PATH] x-send '{\"action\":\"post\",\"text\":\"hello\"}'",
     }
     usage = examples.get(command, f"sidequestor [--workspace PATH] {command} [ARGS...]")
     return f"usage: {usage}\n\n{COMMANDS[command]}"
