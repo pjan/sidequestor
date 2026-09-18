@@ -50,6 +50,7 @@ yaas-triage/
 └── skills/                   ← generic worker skills (loaded on demand)
     ├── yaas-quest-creation/  ← scaffolds new quest folders (new-quest.py)
     ├── yaas-gmail-reply/     ← threaded Gmail reply utility (gmail-reply.py)
+    ├── yaas-gdoc-anchored-comments/ ← guarded, verified inline Google Doc comments
     ├── yaas-answering-quality/ ← bot reply quality rules
     └── yaas-ops/             ← this file
 
@@ -248,6 +249,18 @@ Reads `SIDEQUESTOR_FROM_EMAIL` from env for the From header. See `.yaas/engine/c
 
 Deterministic quest scaffolding. Takes a JSON spec on argv or stdin, creates the four-file folder under `state/quests/active/`, validates fields, injects `last_checked_ts` so the worker can never forget it. See `.yaas/engine/current/skills/yaas-quest-creation/SKILL.md`.
 
+### `sq gdoc-comment`
+
+Adds real text-anchored Google Doc comments through a dedicated Chrome profile and Playwright.
+The writer enforces active-quest scope, `allow_send` or an exact claimed approval, dispatch
+idempotency, exclusive browser access, Drive verification, and quest timeline logging. Every write
+requires an idempotency key. One
+exact-case anchor is accepted per idempotency key, avoiding partial multi-comment writes. The `gws` CLI
+must be installed and authenticated with Drive access. The capability is enabled by default and
+can be disabled workspace-wide with
+`SIDEQUESTOR_GDOC_COMMENTS_ENABLED=0`. See
+`.yaas/engine/current/skills/yaas-gdoc-anchored-comments/SKILL.md`.
+
 ---
 
 ## Setup (first time or new colleague)
@@ -313,6 +326,7 @@ come up while debugging:
 |---|---|---|
 | `SIDEQUESTOR_CHECKER_CONNECTORS` | `slack,email,github,jira` | Comma-separated external connectors allowed to poll. Add `telegram` and `x` explicitly after authentication. Disabled connector watches and watermarks are preserved. Local schedule/approval checks always run. |
 | `SIDEQUESTOR_SLACK_CHECKERS_ENABLED` | 1 | `0` disables all local `slack_*` Python checks and the reaction sweep. Slack watermarks are held; schedules and worker MCP access are unaffected. |
+| `SIDEQUESTOR_GDOC_COMMENTS_ENABLED` | 1 | `0` disables the guarded external-write surface for text-anchored Google Doc comments. |
 | `SIDEQUESTOR_MAX_SPEND_1H` | 40 | Hourly dollar ceiling. On breach, checks still run but the dispatch is withheld and `gate_budget_exceeded` is logged. This is the first thing to check when nothing is dispatching despite dirty quests. |
 | `SIDEQUESTOR_MAX_SPEND_24H` | 250 | Daily dollar ceiling. |
 | `SIDEQUESTOR_MAX_DISPATCH_6H` | 250 | Dispatch-count ceiling. The only ceiling that works under the codex/cursor backends, which report no cost. |

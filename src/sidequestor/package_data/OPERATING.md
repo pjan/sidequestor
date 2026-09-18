@@ -64,7 +64,10 @@ the packaged runtime directory. Put mutable data in the workspace through the su
   `send: true`. A direct send requires `allow_send: true` or an exact claimed `remote_request`
   approval bound to its peer, reply target, and message. Dispatched sends also require an
   `idempotency_key`. A `manual_instruction` does not override these controls.
-- If an action is blocked, log the blocker, ack the item `blocked`, and report it.
+- If an action is blocked, log the blocker, ack the item `blocked`, and report it. The managed
+  dispatch skill defines one narrow exception for a complete `slack_mention` fan-out: after an
+  individual conversation is live-read-verified and safely transferred to a one-shot exact thread
+  watch, the broad mention item is handled so unrelated conversations can commit.
 
 A backend-native workspace instruction file (`CLAUDE.md` under the Claude backend,
 `AGENTS.md` otherwise) may add user-specific instructions. It is optional, and

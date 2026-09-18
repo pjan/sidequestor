@@ -60,7 +60,7 @@ Never read all four as a reflex. Each file read costs a model round-trip. After 
 
 ### 2. Figure out what's actually new
 
-**Slack watch types** (`slack_thread`, `slack_channel`, `slack_dm`): query with the appropriate MCP tool (`slack_read_thread`, `slack_read_channel`, `slack_search_public_and_private`).
+**Slack watch types** (`slack_thread`, `slack_channel`, `slack_dm`): query with the appropriate MCP tool (`slack_read_thread`, `slack_read_channel`, `slack_search_public_and_private`). For a `slack_thread` watch, read the complete thread without an `oldest` boundary, then post-filter messages newer than `last_checked_ts` to identify what triggered the dispatch. The whole thread is the conversational context; the watermark identifies what is new. Never decide whether to reply from the latest message or a watermark-truncated excerpt alone.
 
 > **Truncate `last_checked_ts` to 6 decimals before using it as `oldest`/`latest`.** Slack returns
 > ZERO messages for a timestamp with more precision than that, and returns them normally with
@@ -123,6 +123,12 @@ Post a comment with `POST /rest/api/3/issue/<KEY>/comment` only when the quest a
 
 The watch is usually repo-wide, so it fires on PRs unrelated to the quest. **If the changed PR is out of scope, log nothing and exit** — do not investigate it, comment on it, or add a watch for it.
 
+Before replying to an in-scope PR, check `timeline.ndjson` and the PR activity timestamps for the
+same PR number. If the only update after the recorded action is the quest's own GitHub comment or
+review, ack `nothing_to_do` and do not write again. Act only when a later human comment, review,
+state change, or head commit adds new information. This guard is mandatory for `involves:<self>`
+searches because the quest's own comment keeps the PR in the result set and bumps `updatedAt`.
+
 **GitHub issue watch type** (`github_issue`): fires when an issue in the entry's `repo` changed (opened, commented, relabelled, closed). Pull requests are excluded, so it never double-reports with a `github_pr` watch on the same repo; pair the two when you want both halves. Use `gh`:
 - `gh issue view <n> --repo <repo> --json number,title,body,state,author,labels,comments` — the issue and its discussion.
 - `gh search issues --repo <repo> --sort updated --order desc --limit 20 --json number,title,state,updatedAt` — re-locate what moved.
@@ -139,10 +145,41 @@ So a reviewer question, a correction, or a one-line fix is **never** blocked by 
 
 Based on the quest's `context.md`, the watch type that fired, and the new content, decide:
 
-- **Someone replied to a tracked thread** → evaluate whether the quest's objective is met. If yes, update `meta.json` status to `completed`. If not, decide if you need to reply, escalate, or keep waiting. Log it with `log-event.py`.
-- **A DM arrived from a watched partner** → read the thread context, compose a response (draft first unless quest explicitly authorizes `allow_send`), log action.
+**Wait for your turn.** New activity is a reason to read the complete conversation, not an
+obligation to speak. Before composing anything, read the full thread or conversation to
+identify who is talking to whom, what remains unresolved, and whether the agent now has a clear
+conversational turn.
+
+Speak when a human directly asks the user or agent a question, supplies information that requires
+their response, or the conversation has reached a conclusion that the quest must acknowledge or
+act on. When several humans are talking to each other, let the exchange continue and wait for its
+conclusion. Routing-only messages (`cc`, `for visibility`, adding someone), acknowledgements,
+reactions, partial answers, and intermediate hand-offs normally mean **wait**. A person being
+mentioned by someone else does not give the agent a turn to address or re-tag that person.
+
+When it is not the agent's turn, take no outbound action, ack the watch `nothing_to_do`, and keep
+watching the conversation. Silence is a successful outcome. Do not post a courtesy acknowledgement,
+repeat the open questions, narrate that you are waiting, or manufacture a next step merely because
+a human message triggered the watch. `allow_send: true` permits a send when one is warranted; it
+does not create a conversational turn.
+
+When it is the agent's turn, respond on the same surface, then complete any stated action in the
+same dispatch under §3b. This turn-taking rule applies to Slack threads, channels, and DMs; Jira
+comments; Telegram chats; X conversations; email; GitHub review, issue, and PR comments; and any
+future reply-capable connector. Send through the surface's supported helper and normal
+authorization path. If a warranted response requires review, queue it. If the connector cannot
+write, ack `blocked` so the reply is retried instead of burning the watermark, except for a safely
+transferred complete `slack_mention` fan-out under the explicit exception below. Self-authored
+messages, bots, automated or bulk notifications, and non-conversational status or field changes
+also require no reply.
+
+Treat every legacy `watch_mode` field as inert metadata. It never overrides the turn-taking
+decision above.
+
+- **Someone added activity to a tracked thread** → read the complete thread and decide whether it is the agent's turn. If yes, respond and then evaluate whether the quest's objective is met. If no, ack `nothing_to_do` and keep waiting. If the objective is met, update `meta.json` status to `completed`; otherwise continue as the objective requires. Log only material new information or action.
+- **A DM arrived from a watched partner** → read the conversation context and decide whether it calls for a response. If yes, compose one (draft first unless the quest explicitly authorizes `allow_send`) and log the action. If it is an acknowledgement or the conversation is still between other humans, wait.
 - **A new top-level message in a watched channel** → apply the quest's `context.md` decision rules. If the common fast-path is "log and ignore," just exit without any file edits.
-- **A new email matching a watched query** → read the full message, apply the quest's `context.md` decision rules. **Always acknowledge the email** with a reply (via `python3 "$SIDEQUESTOR_RUNTIME_ROOT/yaas-triage/skills/yaas-gmail-reply/gmail-reply.py"`) before or immediately after taking action — even if the action is just "request submitted, will follow up." Exception: bulk, automated, or notification emails where a human reply would be inappropriate. Log `info_received` or `message_sent` with `log-event.py`.
+- **A new email matching a watched query** → read the full thread and decide whether it is the agent's turn. If a response is warranted, use `python3 "$SIDEQUESTOR_RUNTIME_ROOT/yaas-triage/skills/yaas-gmail-reply/gmail-reply.py"`, then complete the stated action. Bulk, automated, notification, acknowledgement-only, and human-to-human messages require no reply. Log `info_received` or `message_sent` only when material.
 
 Reactions are never handled here — they are their own dispatch target, see § Reactions Fast Path.
 
@@ -247,6 +284,22 @@ submit a fresh instruction after checking the outcome.
 
 **Cancellation edge case:** `start` returns `skip:cancelled` if the user cancelled between triage's check and your dispatch — log a `note`, exit 0.
 
+### 3d. Never escalate on your own initiative (general rule — all quests)
+
+A thread going unanswered is not authorization to widen it. Escalation spends the user's political
+capital on people who did not agree to the spend, and it lands on colleagues as an accusation
+however carefully the sentence is phrased.
+
+1. **One nudge, in the original thread.** Short, and with no reference to how long it has been.
+2. **Then stop and report.** Surface it under Attention needed in the Output Contract so the user
+   decides whether to escalate. Do not move the question to a wider channel, and do not tag anyone
+   senior to the original audience, without an explicit go-ahead.
+3. **When escalation is authorized**, do not date-stamp the silence ("unanswered since 4 Sep"), do
+   not imply anyone dropped it, keep the people originally asked on the message rather than going
+   around them, and do not attach loosely related links to make it feel urgent.
+4. **Rule #10 in `yaas-answering-quality` still applies** inside the escalation: ask who owns it,
+   never tell anyone to pick it up.
+
 ### 4. Log everything with `log-event.py`
 
 Append one line per action **through `log-event.py`**. Never hand-write the JSON
@@ -295,7 +348,46 @@ The helper sends or drafts, then appends a timeline entry carrying the exact `me
 When closing an approval whose action was a Jira/GitHub/Gmail post, pass that URL to `approval-helper.py done <id> <url>` instead of a Slack ts: it is stored as `result_url` and becomes the history link.
 
 
-If you **couldn't** complete an action (error, ambiguous situation, needed user input), log it with `log-event.py` as a `blocked` event with details, and **stop without finishing the rest of the work**. Surface the blocker in the Output Contract under "Errors". Ack the item as `blocked` (§ 4a) so triage holds its watermark.
+**Slack mention fan-out exception.** A `slack_mention` watch is one ledger item even when its
+search returns many unrelated conversations. If you successfully read the complete dispatched
+search window but one conversation's downstream action cannot finish, do not let that one action
+block and replay the entire mention batch. Before continuing:
+
+1. Log the specific blocker with its `channel_id`, `thread_ts`, and `message_ts`.
+2. Before installing anything, perform a live thread read with the exact `channel_id` and parent
+   `thread_ts`; confirm that the returned conversation contains the blocked `message_ts`. A reply
+   timestamp is not a parent thread timestamp. If the live read fails or does not contain that
+   message, do not transfer it.
+3. Transfer retry responsibility to an exact `slack_thread` watch through `sq watch`, with
+   `"ephemeral": true`, `"include_parent": true`, and
+   `"one_shot_until_ts":"<blocked_message_ts>"`. Set its `last_checked_ts` to one microsecond
+   before the blocked `message_ts`, so the triggering message itself reappears even when it is the
+   top-level thread parent, and make the reason name the unfinished action. If several blocked
+   messages belong to the same thread, use one watch starting just before the earliest one and set
+   `one_shot_until_ts` to the latest one. After a successful ack advances through that timestamp,
+   housekeeping retires the bounded-purpose watch. The checker caps the handoff at
+   `one_shot_until_ts`, so later thread replies stay outside this retry. When the exact thread fires,
+   check its messages against `timeline.ndjson` and retry only the transferred unfinished actions;
+   never repeat a message already completed during the original mention dispatch. If `sq watch`
+   prints `skip:duplicate`, confirm the existing thread watch's watermark is still before the
+   earliest message and that it has `include_parent: true` plus the same bounded target when a
+   blocked message equals `thread_ts`; never assume a duplicate has preserved the retry.
+4. Continue processing every other mention in the dispatched window. After every result has been
+   read and either completed, consciously skipped, or transferred, ack the original
+   `slack_mention` item as `handled`, noting the transferred thread. The broad search watermark may
+   then commit while the exact thread retries independently.
+
+This exception is valid only when the dispatched mention item says `complete: true`, the full
+mention window was read, and every blocked item was successfully transferred. If search coverage
+is incomplete, source coordinates are missing, the exact thread cannot be verified by live read,
+`sq watch` fails, a duplicate exact watch has already advanced past the blocked message, or a
+duplicate lacks bounded parent inclusion for a blocked parent message, use the normal rule below
+and ack the mention watch as `blocked`.
+
+For every other case, if you **couldn't** complete an action (error, ambiguous situation, needed
+user input), log it with `log-event.py` as a `blocked` event with details, and **stop without
+finishing the rest of the work**. Surface the blocker in the Output Contract under "Errors". Ack
+the item as `blocked` (§ 4a) so triage holds its watermark.
 
 ### 4a. Ack every dispatched item before you exit
 

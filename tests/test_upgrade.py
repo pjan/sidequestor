@@ -78,6 +78,8 @@ class UpgradeTests(unittest.TestCase):
         output = StringIO()
         manifest = {"running": True}
         with patch("sidequestor.upgrade.production_status", return_value=manifest), \
+                patch("sidequestor.upgrade.read_dashboard_port", return_value=43123), \
+                patch("sidequestor.upgrade.wait_for_dashboard_port", return_value=True) as wait, \
                 patch("sidequestor.upgrade.stop_production", return_value=True) as stop, \
                 patch("sidequestor.upgrade.subprocess.run", side_effect=self._success) as run, \
                 redirect_stdout(output):
@@ -90,15 +92,21 @@ class UpgradeTests(unittest.TestCase):
             )
 
         stop.assert_called_once_with(self.workspace)
+        wait.assert_called_once_with(43123)
         commands = [call.args[0] for call in run.call_args_list]
         self.assertIn("--force-reinstall", commands[0])
         self.assertEqual(
             commands[0][-1],
             "sidequestor @ git+https://github.com/circlefin/sidequestor.git@upgrade-command",
         )
-        self.assertEqual([command[-1] for command in commands[1:]], [
-            "sync-resources", "doctor", "start",
+        self.assertEqual([command[-1] for command in commands[1:3]], [
+            "sync-resources", "doctor",
         ])
+        self.assertEqual(commands[3][-3:], ["start", "--dashboard-port", "43123"])
+        restart_kwargs = run.call_args_list[3].kwargs
+        self.assertNotIn("capture_output", restart_kwargs)
+        self.assertNotIn("stdout", restart_kwargs)
+        self.assertNotIn("stderr", restart_kwargs)
 
     def test_install_failure_attempts_to_restore_previously_running_jobs(self) -> None:
         results = iter((
@@ -135,6 +143,20 @@ class UpgradeTests(unittest.TestCase):
 
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual([command[-1] for command in commands[1:]], ["sync-resources"])
+
+    def test_upgrade_does_not_restart_on_a_different_dashboard_port(self) -> None:
+        with patch("sidequestor.upgrade.production_status", return_value={"running": True}), \
+                patch("sidequestor.upgrade.read_dashboard_port", return_value=43123), \
+                patch("sidequestor.upgrade.wait_for_dashboard_port", return_value=False), \
+                patch("sidequestor.upgrade.stop_production", return_value=True), \
+                patch("sidequestor.upgrade.subprocess.run", side_effect=self._success) as run, \
+                redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            self.assertEqual(run_upgrade(self.workspace, []), 1)
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual([command[-1] for command in commands[1:]], [
+            "sync-resources", "doctor",
+        ])
 
     def test_no_restart_preserves_an_explicitly_stopped_post_upgrade_state(self) -> None:
         with patch("sidequestor.upgrade.production_status", return_value={"running": True}), \

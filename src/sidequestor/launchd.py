@@ -285,16 +285,27 @@ def _bootout_job(uid: str, label: str) -> None:
     raise LaunchdLifecycleError(f"launchd service remains loaded: {label}{suffix}")
 
 
-def _production_jobs(workspace: Workspace, executable: Path) -> dict:
+def _production_jobs(
+    workspace: Workspace, executable: Path, dashboard_port: int = 0,
+) -> dict:
+    if not 0 <= dashboard_port <= 65535:
+        raise ValueError(f"invalid dashboard port: {dashboard_port}")
     python = _preserve_executable_path(executable)
     runtime = Path(__file__).resolve().parent / "runtime"
+    config_home = (
+        os.environ.get("SIDEQUESTOR_CONFIG_HOME")
+        or os.environ.get("YAAS_CONFIG_HOME")
+        or str(Path.home() / ".config")
+    )
     common = {
         "EnvironmentVariables": {
             "HOME": str(Path.home()),
             "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
+            "SIDEQUESTOR_CONFIG_HOME": config_home,
             "SIDEQUESTOR_WORKSPACE": str(workspace.root),
             "SIDEQUESTOR_RUNTIME_ROOT": str(runtime),
             "SIDEQUESTOR_PYTHON": str(python),
+            "YAAS_CONFIG_HOME": config_home,
             "YAAS_WORKSPACE": str(workspace.root),
             "YAAS_RUNTIME_ROOT": str(runtime),
             "YAAS_PYTHON": str(python),
@@ -313,7 +324,10 @@ def _production_jobs(workspace: Workspace, executable: Path) -> dict:
     commands = {
         "triage": [str(python), "-m", "sidequestor", "--workspace", str(workspace.root), "loop"],
         "heartbeat": ["/bin/bash", str(runtime / "yaas-triage" / "ops" / "heartbeat-loop.sh")],
-        "dashboard": [str(python), "-m", "sidequestor", "--workspace", str(workspace.root), "dashboard", "serve", "0"],
+        "dashboard": [
+            str(python), "-m", "sidequestor", "--workspace", str(workspace.root),
+            "dashboard", "serve", str(dashboard_port),
+        ],
     }
     jobs = {}
     for name, arguments in commands.items():
@@ -357,12 +371,14 @@ def _plist(values: dict) -> str:
     return "\n".join(lines)
 
 
-def install_production(workspace: Workspace, executable: Path) -> dict:
+def install_production(
+    workspace: Workspace, executable: Path, dashboard_port: int = 0,
+) -> dict:
     """Install package jobs, replacing this workspace's previous package labels."""
     launch_agents = _production_root()
     launch_agents.mkdir(parents=True, exist_ok=True)
     previous = production_status(workspace)
-    jobs = _production_jobs(workspace, executable)
+    jobs = _production_jobs(workspace, executable, dashboard_port)
     manifest_path = _production_manifest_path(workspace)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     rendered = {}

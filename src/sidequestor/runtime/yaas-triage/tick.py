@@ -1169,6 +1169,12 @@ def dispatch_loop(t, dispatch_targets, targets_json):
     return worst_exit
 
 
+def _quest_dispatch_items(target, dirty_watches_json):
+    return [{"item_id": watch["watch_id"], "type": watch["type"],
+             "complete": watch.get("complete") is not False}
+            for watch in dirty_watches_json if watch["quest_id"] == target]
+
+
 def dispatch_one(t, target, timeout, dirty_watches_json):
     """One agent invocation for one target. Sets t.dispatch_* for the commit step."""
     t.dispatch_exit = 1
@@ -1189,8 +1195,7 @@ def dispatch_one(t, target, timeout, dirty_watches_json):
                  for emoji, tss in pend.items() for ts in tss]
     else:
         kind = "quest"
-        items = [{"item_id": w["watch_id"], "type": w["type"]}
-                 for w in dirty_watches_json if w["quest_id"] == target]
+        items = _quest_dispatch_items(target, dirty_watches_json)
     if not items:
         t.log(f"DISPATCH SKIPPED: {target} — no dispatchable items in manifest")
         t.dispatch_exit = 8

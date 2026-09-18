@@ -136,6 +136,15 @@ require an active quest with `allow_send: true` or an exact claimed `remote_requ
 Dispatched writes also require an `idempotency_key`; an interrupted attempt is held for inspection
 instead of retried blindly. Availability and billing still depend on the X app's current access tier.
 
+`sq gdoc-comment` adds verified text-anchored comments through the Google Docs editor. It uses a
+dedicated authenticated Chrome profile, refuses ambiguous anchor text, requires `allow_send` or an
+exact claimed approval, and logs quest-owned writes. Each invocation accepts one exact-case anchor
+and always requires an independently unique idempotency key. Google Chrome and the `gws` CLI must
+be installed, and `gws` must be authenticated with Drive access for capability checks and
+post-write verification. The surface is enabled by default; set
+`SIDEQUESTOR_GDOC_COMMENTS_ENABLED=0` in the workspace `.env` to disable it. See the installed
+`yaas-gdoc-anchored-comments` skill for one-time Chrome authentication and the payload format.
+
 To test without permitting a worker to send anything, initialize a disposable workspace, enable
 the connectors, create a quest in its dashboard, add a watch, then use `tick --dry-run`:
 
@@ -220,11 +229,19 @@ sq upgrade --source https://github.com/OWNER/sidequestor.git --ref BRANCH
 `sq upgrade` uses the same Python environment as the running `sq` command. It stops production
 jobs only when they were previously marked running, invokes pip, then uses a fresh Python process
 to sync resources and run `sq doctor`. Previously running jobs restart only after both checks
-succeed. Git installs require confirmation because they install code with the worker's permissions;
+succeed. The upgrader preserves each instance's actual published dashboard port and waits up to
+60 seconds for that port to be released before restarting. Git installs require confirmation
+because they install code with the worker's permissions;
 pass `--yes` for a non-interactive run. Use `--pre` to consider PyPI pre-releases or
 `--no-restart` to leave previously running jobs stopped. Git sources are limited to HTTPS GitHub
 repository URLs and require an explicit `--ref`; a commit SHA is reproducible while a branch can
 move.
+
+The first upgrade to the stable per-user Slack Keychain helper can show one macOS password prompt.
+Choose **Always Allow** so background refreshes can use that same helper identity without prompting
+again. Run `sq credentials status` to inspect the migration without opening Keychain, or
+`sq credentials repair-keychain` in an interactive terminal to retry it. A failed or cancelled
+migration leaves the selected instance stopped; after repair, start it normally with `sq start`.
 
 If the installed command itself is broken, the equivalent recovery sequence remains
 `python -m pip install --upgrade sidequestor`, `sq sync-resources`, `sq doctor`, and `sq start`.

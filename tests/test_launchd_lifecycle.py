@@ -63,6 +63,8 @@ class ProductionLaunchdLifecycleTest(unittest.TestCase):
             environment = job["values"]["EnvironmentVariables"]
             self.assertEqual(environment["SIDEQUESTOR_PYTHON"], str(python))
             self.assertEqual(environment["YAAS_PYTHON"], str(python))
+            self.assertEqual(environment["SIDEQUESTOR_CONFIG_HOME"], str(self.root / "config"))
+            self.assertEqual(environment["YAAS_CONFIG_HOME"], str(self.root / "config"))
         self.assertTrue(all(Path(job["plist"]).is_file() for job in manifest["jobs"].values()))
 
         self.assertTrue(stop_production(self.workspace))
@@ -80,6 +82,12 @@ class ProductionLaunchdLifecycleTest(unittest.TestCase):
         calls = [call.args[0] for call in self.run.call_args_list]
         self.assertTrue(any(command[:2] == ["launchctl", "bootstrap"] for command in calls))
         self.assertTrue(any(command[:2] == ["launchctl", "bootout"] for command in calls))
+
+    def test_restart_can_render_the_previous_dashboard_port(self) -> None:
+        jobs = _production_jobs(
+            self.workspace, self.root / "venv" / "bin" / "python", dashboard_port=8878,
+        )
+        self.assertEqual(jobs["dashboard"]["arguments"][-1], "8878")
 
     def test_shadow_install_never_changes_launchd_state(self) -> None:
         self.run.reset_mock()

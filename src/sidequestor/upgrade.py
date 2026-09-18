@@ -10,6 +10,7 @@ import sys
 from urllib.parse import urlsplit
 
 from . import __version__
+from .dashboard import read_dashboard_port, wait_for_dashboard_port
 from .launchd import LaunchdLifecycleError, production_status, stop_production
 from .workspace import Workspace
 
@@ -46,7 +47,7 @@ def github_requirement(source: str, ref: str) -> str:
     return f"sidequestor @ git+https://github.com/{owner}/{repository}.git@{ref}"
 
 
-def _fresh_cli(workspace: Workspace, command: str) -> list[str]:
+def _fresh_cli(workspace: Workspace, command: str, *args: str) -> list[str]:
     return [
         sys.executable,
         "-m",
@@ -54,6 +55,7 @@ def _fresh_cli(workspace: Workspace, command: str) -> list[str]:
         "--workspace",
         str(workspace.root),
         command,
+        *args,
     ]
 
 
@@ -73,11 +75,34 @@ def _run(command: list[str], workspace: Workspace, *, fresh_import: bool = False
     return result.returncode if result.returncode >= 0 else 1
 
 
-def _restore_after_install_failure(workspace: Workspace, should_restart: bool) -> None:
+def _restart_command(workspace: Workspace, dashboard_port: int | None) -> list[str]:
+    command = _fresh_cli(workspace, "start")
+    if dashboard_port is not None:
+        command.extend(["--dashboard-port", str(dashboard_port)])
+    return command
+
+
+def _wait_for_previous_dashboard_port(dashboard_port: int | None) -> bool:
+    if dashboard_port is None:
+        return True
+    print(f"Waiting for dashboard port {dashboard_port} to become available.")
+    return wait_for_dashboard_port(dashboard_port)
+
+
+def _restore_after_install_failure(
+    workspace: Workspace, should_restart: bool, dashboard_port: int | None,
+) -> None:
     if not should_restart:
         return
     print("Package installation failed; attempting to restore the previously running jobs.")
-    if _run(_fresh_cli(workspace, "start"), workspace, fresh_import=True):
+    if not _wait_for_previous_dashboard_port(dashboard_port):
+        print(
+            f"warning: dashboard port {dashboard_port} is still in use; "
+            "Sidequestor was not restarted.",
+            file=sys.stderr,
+        )
+        return
+    if _run(_restart_command(workspace, dashboard_port), workspace, fresh_import=True):
         print(
             "warning: Sidequestor could not be restarted; "
             "run `sq start` after repairing the installation.",
@@ -126,6 +151,7 @@ def run_upgrade(workspace: Workspace, args: list[str]) -> int:
 
     manifest = production_status(workspace)
     was_running = bool(manifest and manifest.get("running"))
+    dashboard_port = read_dashboard_port(workspace) if was_running else None
     if was_running:
         try:
             if not stop_production(workspace):
@@ -148,10 +174,14 @@ def run_upgrade(workspace: Workspace, args: list[str]) -> int:
         install_code = _run(pip_command, workspace)
     except KeyboardInterrupt:
         print("Package installation interrupted.", file=sys.stderr)
-        _restore_after_install_failure(workspace, was_running and not values.no_restart)
+        _restore_after_install_failure(
+            workspace, was_running and not values.no_restart, dashboard_port,
+        )
         return 130
     if install_code:
-        _restore_after_install_failure(workspace, was_running and not values.no_restart)
+        _restore_after_install_failure(
+            workspace, was_running and not values.no_restart, dashboard_port,
+        )
         return install_code
 
     # This process still has the old package imported. Every post-install operation must
@@ -175,10 +205,24 @@ def run_upgrade(workspace: Workspace, args: list[str]) -> int:
         return doctor_code
 
     if was_running and not values.no_restart:
+        if not _wait_for_previous_dashboard_port(dashboard_port):
+            print(
+                f"Upgrade validated, but dashboard port {dashboard_port} is still in use; "
+                "Sidequestor remains stopped.",
+                file=sys.stderr,
+            )
+            return 1
         print("Restarting the previously running Sidequestor jobs.")
-        start_code = _run(_fresh_cli(workspace, "start"), workspace, fresh_import=True)
+        start_code = _run(
+            _restart_command(workspace, dashboard_port), workspace, fresh_import=True,
+        )
         if start_code:
-            print("Upgrade validated, but Sidequestor could not be restarted.", file=sys.stderr)
+            print(
+                "Upgrade validated, but Sidequestor could not be restarted. "
+                "If Keychain authorization was interrupted, run "
+                "`sq credentials repair-keychain` in a terminal.",
+                file=sys.stderr,
+            )
             return start_code
     elif was_running:
         print("Upgrade complete; jobs remain stopped because --no-restart was supplied.")
